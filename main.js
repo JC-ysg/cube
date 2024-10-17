@@ -5,6 +5,13 @@ import { OrbitControls } from './OrbitControls.js';
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
+// Create a raycaster and a mouse vector
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
+// Track the currently highlighted cube
+let highlightedCube = null;
+
 // Set up the renderer with shadows enabled and a dark grey background
 const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -44,9 +51,12 @@ for (let x = 0; x < gridSize; x++) {
             const geometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
             const material = new THREE.MeshStandardMaterial({
                 color: 0xffffff,
-                opacity: 0.1,
+                opacity: 0.01,
                 transparent: true,
             });
+            if(z==0){
+                material.opacity=.8;
+            }
 
             const smallCube = new THREE.Mesh(geometry, material);
             smallCube.castShadow = true;
@@ -115,49 +125,104 @@ function onCubeClick(event) {
     const intersects = raycaster.intersectObjects(cubes);
 
     if (intersects.length > 0) {
-        const cube = intersects[0].object;
-
-        // If the cube is already textured, ignore further clicks
-        if (cube.textured) {
-            return;
-        }
-
-        // Apply texture and opacity change
-        cube.material.map = texture;
-        cube.material.opacity = 1;
-        cube.material.needsUpdate = true;
-
-        // Mark the cube as textured
-        cube.textured = true;
+        const clicked = intersects[0].object;
 
         // Get x, y position of the clicked cube
-        const clickedX = cube.position.x;
-        const clickedY = cube.position.y;
+        const clickedX = clicked.position.x;
+        const clickedY = clicked.position.y;
 
         // Get the current stack height at this x, y position
-        let currentZ = cubePositions.get(positionKey(clickedX, clickedY));
+        let currentZ = cubePositions.get(positionKey(clickedX, clickedY)) || 0;
 
-        // Calculate the new z position based on the current stack height
-        const newZPosition = (currentZ * (cubeSize + spacing)) - (gridSize / 2) * (cubeSize + spacing);
+        // Check if the current stack height is less than the grid height
+        const maxStackHeight = gridSize; // Set grid height limit
+        if (currentZ < maxStackHeight) {
+            // Create a new cube (not modifying the clicked cube)
+            const cube = new THREE.Mesh(clicked.geometry, clicked.material.clone()); // Clone the material
 
-        // Constrain z position within grid boundaries
-        const constrainedZPosition = Math.min(boundaryMax, Math.max(boundaryMin, newZPosition));
+            // Set the new cube's position to match the clicked cube's position
+            cube.position.set(clickedX, clickedY, clicked.position.z);
 
-        // Animate cube dropping from top to the lowest available z position
-        gsap.fromTo(cube.position, 
-            { z: (gridSize / 2) * (cubeSize + spacing) }, // Start at the top of the grid
-            {
-                z: constrainedZPosition, // Drop to the lowest available z position
-                duration: 1.5,
-                ease: "bounce.out",
-            }
-        );
+            // Add the new cube to the scene
+            scene.add(cube);
 
-        // Update stack height for this x, y position
-        cubePositions.set(positionKey(clickedX, clickedY), currentZ + 1);
+            // Apply texture and opacity change to the new cube, not the clicked one
+            cube.material.map = texture;
+            cube.material.opacity = 1;
+            cube.material.needsUpdate = true;
+
+            // Reset the emissive color to black (default) so it's not red
+            cube.material.emissive.setHex(0x000000);
+
+            // Mark the new cube as textured
+            cube.textured = true;
+
+            // Add the newly placed cube to the cubes array
+            cubes.push(cube);  // Ensure the new cube is tracked for raycasting
+
+            // Calculate the new z position based on the current stack height
+            const newZPosition = ((currentZ + 1) * (cubeSize + spacing)) - (gridSize / 2) * (cubeSize + spacing);
+
+            // Constrain z position within grid boundaries
+            const constrainedZPosition = Math.min(boundaryMax, Math.max(boundaryMin, newZPosition));
+
+            // Animate the new cube dropping from the top to the lowest available z position
+            gsap.fromTo(cube.position,
+                { z: (gridSize / 2) * (cubeSize + spacing) }, // Start at the top of the grid
+                {
+                    z: constrainedZPosition, // Drop to the lowest available z position
+                    duration: 1.5,
+                    ease: "bounce.out",
+                }
+            );
+
+            // Update stack height for this x, y position
+            cubePositions.set(positionKey(clickedX, clickedY), currentZ + 1);
+        } else {
+            console.log("Stack is full, cannot place any more cubes here.");
+        }
     }
 }
 
+// Handle mouse movement to highlight cubes
+function onMouseMove(event) {
+    // Calculate mouse position in normalized device coordinates
+    mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+    // Update the raycaster based on the mouse position and camera
+    raycaster.setFromCamera(mouse, camera);
+
+    // Find intersections
+    const intersects = raycaster.intersectObjects(cubes);
+
+    // Reset the previous highlighted cubes in the column
+    if (highlightedCubes && highlightedCubes.length > 0) {
+        highlightedCubes.forEach((cube) => {
+            cube.material.emissive.setHex(0x000000); // Reset emissive color
+        });
+        highlightedCubes = []; // Clear the array
+    }
+
+    if (intersects.length > 0) {
+        const intersectedCube = intersects[0].object;
+
+        // Get the intersected cube's X and Y coordinates
+        const targetX = intersectedCube.position.x;
+        const targetY = intersectedCube.position.y;
+
+        // Highlight all cubes in the same X-Y column (different Z)
+        cubes.forEach((cube) => {
+            // Check if the cube has the same X and Y coordinates (use a small tolerance for floating point precision)
+            if (Math.abs(cube.position.x - targetX) < 0.001 && Math.abs(cube.position.y - targetY) < 0.001) {
+                cube.material.emissive.setHex(0xff0000); // Red highlight
+                highlightedCubes.push(cube); // Store the highlighted cubes
+            }
+        });
+    }
+}
+
+let highlightedCubes = [];
 // Function to undo cube positions and reset texture/opacity
 function undoAllCubes() {
     cubes.forEach(cube => {
@@ -187,6 +252,8 @@ function undoAllCubes() {
     });
 }
 
+// Add mousemove event listener
+window.addEventListener('mousemove', onMouseMove, false);
 // Handle both left-click (drop) and right-click (undo) with one event listener
 window.addEventListener('mousedown', (event) => {
     switch (event.button) {
@@ -216,3 +283,5 @@ function animate() {
 }
 
 animate();
+
+
