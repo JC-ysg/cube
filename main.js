@@ -261,8 +261,8 @@ window.addEventListener('mousedown', (event) => {
             onCubeClick(event);
             break;
         case 2: // Right-click
-            event.preventDefault();
-            undoAllCubes();
+            //event.preventDefault();
+            //undoAllCubes();
             break;
     }
 }, false);
